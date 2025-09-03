@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Signal List Maker – Emoji Style (Realistic) + Last High</title>
+  <style>
+    :root{
+      --bg:#0b0e14; --card:#111827; --ink:#e5e7eb; --muted:#a5b4fc;
+      --line:#1f2937; --accent:#7c3aed;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{margin:0;font:15px/1.6 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial;color:var(--ink);background:#0b0e14}
+    .wrap{max-width:860px;margin:24px auto;padding:0 16px}
+    header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+    h1{margin:0;font-size:20px;color:#c4b5fd}
+    .clock{padding:6px 10px;border:1px solid var(--line);border-radius:10px;background:#0f172a;font-variant-numeric:tabular-nums;color:#cbd5e1}
+
+    .panel{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;margin-bottom:14px}
+    label{display:block;font-size:12px;color:#9ca3af;margin:4px 0}
+    input,select,button,textarea{font:inherit}
+    .row{display:grid;grid-template-columns:repeat(12,1fr);gap:10px}
+    .ctrl{width:100%;padding:9px 10px;border-radius:10px;border:1px solid var(--line);background:#0f172a;color:#e5e7eb}
+    textarea.ctrl{height:110px;resize:vertical}
+    .btn{padding:9px 12px;border:none;border-radius:10px;cursor:pointer;font-weight:700}
+    .btn-primary{background:linear-gradient(90deg,#7c3aed,#06b6d4);color:#fff}
+    .btn-ghost{background:transparent;border:1px solid var(--line);color:#cbd5e1}
+    .hint{font-size:12px;color:#9ca3af;margin-top:6px}
+
+    .sheet{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px}
+    .sig{padding:10px 0;border-bottom:1px dashed #374151}
+    .sig:last-child{border-bottom:0}
+    .sig h3{margin:0 0 6px 0;letter-spacing:.4px}
+    .sig ul{margin:0 0 0 18px;padding:0}
+    .sig li{margin:6px 0}
+    .muted{color:#a5b4fc}
+    .badge{display:inline-block;background:#0f172a;border:1px solid #243142;border-radius:999px;padding:5px 10px;margin:0 6px 8px 0}
+    @media (max-width:560px){ .row{grid-template-columns:1fr 1fr} .row > *{grid-column:span 1 !important} }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>Signal List Maker (Emoji – Realistic)</h1>
+      <div class="clock" id="clock">--:--</div>
+    </header>
+
+    <section class="panel">
+      <div class="row">
+        <div style="grid-column:span 6">
+          <label for="history">Recent rounds (newest last)</label>
+          <textarea id="history" class="ctrl" placeholder="23:47 21.59x
+1.31x
+1.22x
+3.18x
+1.09x
+1.07x"></textarea>
+          <div class="hint">Format per line: <code>HH:MM 20.30x</code> or <code>20.30x</code> (time optional).</div>
+        </div>
+
+        <div style="grid-column:span 3">
+          <label for="start">Start from (HH:MM)</label>
+          <input id="start" class="ctrl" type="time" step="60" />
+        </div>
+        <div style="grid-column:span 3">
+          <label for="mode">Mode</label>
+          <select id="mode" class="ctrl">
+            <option value="mid">Mid Odds 11x–15x (safer)</option>
+            <option value="high">High Odds 20x–35x (riskier)</option>
+          </select>
+          <label for="count" style="margin-top:8px">Signals</label>
+          <input id="count" class="ctrl" type="number" min="1" max="12" value="3" />
+        </div>
+      </div>
+
+      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-primary" id="gen">Generate</button>
+        <button class="btn btn-ghost" id="clear">Clear</button>
+        <button class="btn btn-ghost" id="copy">Copy for WhatsApp</button>
+      </div>
+      <div class="hint">Realistic spacing (≈3–5, 6–10, 9–14 mins). Confidence auto-adjusts with higher odds.</div>
+    </section>
+
+    <section class="sheet">
+      <div id="lastHighBar" style="display:none;margin-bottom:6px"></div>
+      <div id="sheet"></div>
+    </section>
+
+    <p class="hint">Note: Crash/RNG games have no guaranteed outcomes. These signals are probability-styled formatting.</p>
+  </div>
+
+  <script>
+    // ---------- helpers ----------
+    const $ = s => document.querySelector(s);
+    const pad = n => String(n).padStart(2,'0');
+    const rand = (a,b) => Math.floor(Math.random()*(b-a+1))+a;
+
+    function nowHM(){ const d=new Date(); return {h:d.getHours(), m:d.getMinutes()}; }
+    function setClock(){ const {h,m}=nowHM(); $('#clock').textContent = `${pad(h)}:${pad(m)}`; }
+    setInterval(setClock, 1000); setClock();
+
+    // tiny store
+    const KEY = 'sig_list_emoji_v2';
+    const load = ()=> JSON.parse(localStorage.getItem(KEY)||'[]');
+    const save = a => localStorage.setItem(KEY, JSON.stringify(a));
+
+    // -------- History parsing & last high detection ----------
+    function parseHistory(text){
+      return text.split(/\n+/).map(t=>t.trim()).filter(Boolean).map(L=>{
+        const m=L.match(/^(?:(\d{1,2}):(\d{2})\s+)?([0-9]+(?:\.[0-9]+)?)x$/i);
+        if(!m) return null;
+        const time = (m[1] && m[2]) ? `${pad(m[1])}:${m[2]}` : null;
+        return {t: time, x: +m[3]};
+      }).filter(Boolean);
+    }
+    function findLastHigh(rows, thr=20){
+      for(let i=rows.length-1;i>=0;i--){
+        if(rows[i].x >= thr) return {val: rows[i].x, t: rows[i].t, idx:i, ago: rows.length-1-i};
+      }
+      return null;
+    }
+
+    // -------- Signal builder ----------
+    function genSignals(startH, startM, mode, count){
+      const out=[]; let h=startH, m=startM;
+      const gaps = [ ()=>rand(3,5), ()=>rand(6,10), ()=>rand(9,14), ()=>rand(4,7), ()=>rand(5,9) ];
+      for(let i=0;i<count;i++){
+        const inc = gaps[i % gaps.length]();
+        m += inc; if(m>=60){ h=(h+1)%24; m-=60; }
+        const odd = (mode==='mid') ? (rand(110,150)/10) : (rand(200,350)/10);
+        const baseConf = (mode==='mid') ? 84 : 74;
+        const slope    = (mode==='mid') ? 2.2 : 1.6;
+        let conf = Math.round(Math.max(55, Math.min(90, baseConf - (odd - (mode==='mid'?11:20))*slope + (rand(-3,3)))));
+        const crash = Math.max(5, Math.min(40, 100 - conf + rand(-1,2)));
+        out.push({ time:`${pad(h)}:${pad(m)}`, odd:odd.toFixed(1), conf, crash });
+      }
+      return out;
+    }
+
+    function render(){
+      const box = $('#sheet'); box.innerHTML='';
+      const data = load();
+      data.forEach((s,idx)=>{
+        const el = document.createElement('div');
+        el.className='sig';
+        el.innerHTML = `
+          <h3>SIGNAL ${idx+1}</h3>
+          <ul>
+            <li>⏰ <b>${s.time}</b></li>
+            <li>🎲 <span class="muted">Target Odd:</span> <b>${s.odd}x</b></li>
+            <li>💥 <span class="muted">Crash Prob (before ${s.odd}x):</span> ~${s.crash}%</li>
+            <li>🔒 <span class="muted">Confidence:</span> ~${s.conf}%</li>
+          </ul>`;
+        box.appendChild(el);
+      });
+    }
+
+    function copyForWhatsApp(){
+      const data = load();
+      if(!data.length){ alert('No signals to copy'); return; }
+      const txt = data.map((s,i)=>(
+        `SIGNAL ${i+1}\n⏰ ${s.time}\n🎲 Target Odd: ${s.odd}x\n💥 Crash Prob (before ${s.odd}x): ~${s.crash}%\n🔒 Confidence: ~${s.conf}%`
+      )).join("\n\n");
+      navigator.clipboard.writeText(txt).then(()=>alert('Copied to clipboard 👍'));
+    }
+
+    // -------- UI wire ----------
+    (function init(){
+      const n = nowHM(); $('#start').value = `${pad(n.h)}:${pad(n.m)}`;
+      render();
+
+      $('#gen').onclick = ()=>{
+        // 1) show last ≥20x from pasted history
+        const hist = parseHistory($('#history').value);
+        const bar  = $('#lastHighBar');
+        if(hist.length){
+          const H20 = findLastHigh(hist,20);
+          bar.style.display='block';
+          bar.innerHTML = H20
+            ? `<span class="badge">Last ≥20x: <b>${(H20.t||`${H20.ago} rounds ago`)}</b> • ${H20.val.toFixed(2)}x</span>`
+            : `<span class="badge">Last ≥20x: not found in pasted list</span>`;
+        }else{
+          bar.style.display='none';
+        }
+
+        // 2) generate signals
+        const [hStr,mStr] = ($('#start').value || `${pad(n.h)}:${pad(n.m)}`).split(':');
+        const mode = $('#mode').value;
+        const cnt  = Math.max(1, Math.min(12, +$('#count').value||3));
+        const newOnes = genSignals(+hStr, +mStr, mode, cnt);
+        const arr = load(); arr.push(...newOnes); save(arr); render();
+      };
+
+      $('#clear').onclick = ()=>{ localStorage.removeItem(KEY); render(); };
+      $('#copy').onclick  = copyForWhatsApp;
+    })();
+  </script>
+</body>
+</html>
